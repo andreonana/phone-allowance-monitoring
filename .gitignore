@@ -8,3 +8,5 @@ data/*.xlsx
 data/exports/
 data/logs/
 .DS_Store
+build/
+dist/

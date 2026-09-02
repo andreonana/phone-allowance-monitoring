@@ -1,0 +1,52 @@
+name: Build Windows executable
+
+# Compile automatiquement main.py en un .exe Windows autonome (aucun Python,
+# aucun terminal requis sur le poste qui l'exécute) :
+#   - à chaque push sur main            -> artefact téléchargeable 90 jours
+#     (onglet "Actions" du dépôt -> le run -> section "Artifacts")
+#   - à chaque tag "v*" (ex: v1.0.0)    -> en plus, publié dans une Release
+#     GitHub (lien de téléchargement permanent, recommandé pour livrer le
+#     .exe au client final)
+#   - déclenchement manuel possible (onglet "Actions" -> "Run workflow")
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Lancer les tests
+        run: pytest -q
+
+      - name: Compiler l'exécutable
+        run: pyinstaller PhoneAllowanceMonitoring.spec
+
+      - name: Publier l'artefact de build
+        uses: actions/upload-artifact@v4
+        with:
+          name: PhoneAllowanceMonitoring-windows
+          path: dist/PhoneAllowanceMonitoring.exe
+          retention-days: 90
+
+      - name: Publier une Release (uniquement sur un tag vX.Y.Z)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/PhoneAllowanceMonitoring.exe
+          generate_release_notes: true
