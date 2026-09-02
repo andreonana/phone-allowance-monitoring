@@ -51,12 +51,17 @@ def consolider(mois: str, reference: ReferenceRepository,
         actuel = totaux_actuels.get(matricule)
         precedent = totaux_precedents.get(matricule)
 
-        total_actuel = actuel["total"] if actuel else 0.0
-        total_precedent = precedent["total"] if precedent else None
+        # Arrondi au centime : les montants viennent de sommes flottantes
+        # indépendantes (mois actuel / mois précédent) qui peuvent différer
+        # de quelques 1e-11 même quand la consommation réelle est identique
+        # ("Stable") -> sans arrondi, le rapport affiche du bruit binaire
+        # illisible (ex: 2.91e-11 au lieu de 0) pour un montant en FCFA.
+        total_actuel = round(actuel["total"], 2) if actuel else 0.0
+        total_precedent = round(precedent["total"], 2) if precedent else None
 
         if total_precedent:
-            variation_montant = total_actuel - total_precedent
-            variation_pct = (variation_montant / total_precedent) * 100
+            variation_montant = round(total_actuel - total_precedent, 2)
+            variation_pct = round((variation_montant / total_precedent) * 100, 2)
         else:
             variation_montant = None
             variation_pct = None
@@ -68,9 +73,9 @@ def consolider(mois: str, reference: ReferenceRepository,
             fonction=collab.fonction if collab else "",
             type=collab.type if collab else TypeCollaborateur.INDIVIDUEL,
             numero_orange=actuel["numero_orange"] if actuel else "",
-            montant_orange=actuel["ORANGE"] if actuel else 0.0,
+            montant_orange=round(actuel["ORANGE"], 2) if actuel else 0.0,
             numero_mtn=actuel["numero_mtn"] if actuel else "",
-            montant_mtn=actuel["MTN"] if actuel else 0.0,
+            montant_mtn=round(actuel["MTN"], 2) if actuel else 0.0,
             total_actuel=total_actuel,
             total_precedent=total_precedent,
             variation_montant=variation_montant,
