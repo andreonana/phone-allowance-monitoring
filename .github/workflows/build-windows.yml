@@ -18,6 +18,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write  # requis pour publier la Release sur un tag vX.Y.Z
     steps:
       - uses: actions/checkout@v4
 
