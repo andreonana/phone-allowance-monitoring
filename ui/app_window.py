@@ -1,13 +1,14 @@
 """
-Fenêtre principale de l'application (Tkinter, bibliothèque standard : aucune
-dépendance supplémentaire, portable Windows/Mac/Linux et empaquetable telle
-quelle avec PyInstaller).
+Fenêtre principale de l'application (Tkinter, bibliothèque standard pour les
+widgets + matplotlib pour les graphiques, portable Windows/Mac/Linux et
+empaquetable telle quelle avec PyInstaller).
 
-Quatre onglets :
-    Import & Analyse   : sélection des fichiers Orange/MTN du mois, rapprochement
-    Base de référence  : gestion des collaborateurs et de leurs numéros
-    Rapport & Alertes  : consolidation, alertes, export du rapport Excel
-    Paramètres         : seuils d'alerte configurables
+Cinq onglets :
+    Tableau de bord     : cartes chiffrées + courbes d'évolution, en un coup d'œil
+    Import & Analyse    : sélection des fichiers Orange/MTN du mois, rapprochement
+    Base de référence   : gestion des collaborateurs et de leurs numéros
+    Rapport & Alertes   : synthèse par collaborateur, alertes, export du rapport Excel
+    Paramètres          : seuils d'alerte configurables
 """
 
 from __future__ import annotations
@@ -29,6 +30,8 @@ from app.paths import get_data_dir, get_history_path, get_reference_base_path
 from app.reconciliation_engine import rapprocher_fichier
 from app.reference_repository import ReferenceRepository
 from app.report_export import exporter_rapport
+from ui import theme
+from ui.dashboard import DashboardFrame
 
 
 def _ouvrir_dossier(chemin: Path) -> None:
@@ -49,8 +52,9 @@ class AppWindow(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Phone Allowance Monitoring")
-        self.geometry("980x640")
-        self.minsize(820, 560)
+        self.geometry("1200x780")
+        self.minsize(980, 640)
+        theme.appliquer_theme(self)
 
         # Chargement de la couche métier (fichiers créés au premier `save()`).
         self.reference = ReferenceRepository(get_reference_base_path())
@@ -61,22 +65,35 @@ class AppWindow(tk.Tk):
         self._dernieres_alertes = []
 
         notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True)
+        notebook.pack(fill="both", expand=True, padx=8, pady=8)
 
+        self.onglet_dashboard = ttk.Frame(notebook)
         self.onglet_import = ttk.Frame(notebook)
         self.onglet_reference = ttk.Frame(notebook)
         self.onglet_rapport = ttk.Frame(notebook)
         self.onglet_parametres = ttk.Frame(notebook)
 
-        notebook.add(self.onglet_import, text="Import & Analyse")
-        notebook.add(self.onglet_reference, text="Base de référence")
-        notebook.add(self.onglet_rapport, text="Rapport & Alertes")
-        notebook.add(self.onglet_parametres, text="Paramètres")
+        notebook.add(self.onglet_dashboard, text="  Tableau de bord  ")
+        notebook.add(self.onglet_import, text="  Import & Analyse  ")
+        notebook.add(self.onglet_reference, text="  Base de référence  ")
+        notebook.add(self.onglet_rapport, text="  Rapport & Alertes  ")
+        notebook.add(self.onglet_parametres, text="  Paramètres  ")
 
+        self._construire_onglet_dashboard()
         self._construire_onglet_import()
         self._construire_onglet_reference()
         self._construire_onglet_rapport()
         self._construire_onglet_parametres()
+
+    # ------------------------------------------------------------------ #
+    # Onglet Tableau de bord
+    # ------------------------------------------------------------------ #
+
+    def _construire_onglet_dashboard(self) -> None:
+        self.onglet_dashboard.columnconfigure(0, weight=1)
+        self.onglet_dashboard.rowconfigure(0, weight=1)
+        self.dashboard = DashboardFrame(self.onglet_dashboard, self.reference, self.history, self.config_repo)
+        self.dashboard.grid(row=0, column=0, sticky="nsew")
 
     # ------------------------------------------------------------------ #
     # Onglet Import & Analyse
@@ -159,6 +176,7 @@ class AppWindow(tk.Tk):
         self.history.save()
         self._log_import("Historique sauvegardé.")
         self._rafraichir_mois_disponibles()
+        self.dashboard.rafraichir(mois)
 
     # ------------------------------------------------------------------ #
     # Onglet Base de référence
@@ -258,6 +276,7 @@ class AppWindow(tk.Tk):
         )
         self.reference.save()
         self._rafraichir_arbre_collaborateurs()
+        self.dashboard.rafraichir()
 
     def _supprimer_collaborateur(self) -> None:
         matricule = self.var_matricule.get().strip()
@@ -269,6 +288,7 @@ class AppWindow(tk.Tk):
         self.reference.save()
         self._vider_formulaire_collaborateur()
         self._rafraichir_arbre_collaborateurs()
+        self.dashboard.rafraichir()
 
     def _ajouter_numero(self) -> None:
         matricule = self.var_matricule.get().strip()
@@ -291,7 +311,8 @@ class AppWindow(tk.Tk):
     def _construire_onglet_rapport(self) -> None:
         cadre = self.onglet_rapport
         cadre.columnconfigure(0, weight=1)
-        cadre.rowconfigure(1, weight=1)
+        cadre.rowconfigure(1, weight=3)
+        cadre.rowconfigure(2, weight=2)
 
         entete = ttk.Frame(cadre)
         entete.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
@@ -302,15 +323,46 @@ class AppWindow(tk.Tk):
         self.combo_mois_rapport.pack(side="left", padx=5)
         ttk.Button(entete, text="Générer le rapport", command=self._generer_rapport).pack(side="left", padx=10)
 
-        colonnes = ("type", "matricule", "nom", "numero", "message")
-        self.arbre_alertes = ttk.Treeview(cadre, columns=colonnes, show="headings")
-        for col, largeur in zip(colonnes, (170, 90, 150, 110, 420)):
+        # -- Synthèse par collaborateur (Orange + MTN, comparaison au mois précédent) --
+        cadre_synthese = ttk.LabelFrame(cadre, text="Synthèse par collaborateur")
+        cadre_synthese.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 8))
+        cadre_synthese.columnconfigure(0, weight=1)
+        cadre_synthese.rowconfigure(0, weight=1)
+
+        colonnes_synthese = ("matricule", "nom", "orange", "mtn", "total_actuel",
+                              "total_precedent", "variation", "variation_pct", "statut")
+        entetes_synthese = ("Matricule", "Nom", "Orange", "MTN", "Total mois actuel",
+                             "Total mois précédent", "Variation (FCFA)", "Variation (%)", "Statut")
+        self.arbre_synthese = ttk.Treeview(cadre_synthese, columns=colonnes_synthese, show="headings")
+        for col, entete_col, largeur in zip(colonnes_synthese, entetes_synthese,
+                                             (90, 150, 100, 100, 130, 140, 130, 100, 90)):
+            self.arbre_synthese.heading(col, text=entete_col)
+            self.arbre_synthese.column(col, width=largeur, anchor="e" if col not in ("matricule", "nom", "statut") else "w")
+        self.arbre_synthese.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        defilement = ttk.Scrollbar(cadre_synthese, orient="vertical", command=self.arbre_synthese.yview)
+        defilement.grid(row=0, column=1, sticky="ns", pady=8)
+        self.arbre_synthese.configure(yscrollcommand=defilement.set)
+        theme.configurer_tags_couleur(self.arbre_synthese, theme.COULEURS_STATUT)
+
+        # -- Alertes du mois --
+        cadre_alertes = ttk.LabelFrame(cadre, text="Alertes")
+        cadre_alertes.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 8))
+        cadre_alertes.columnconfigure(0, weight=1)
+        cadre_alertes.rowconfigure(0, weight=1)
+
+        colonnes_alertes = ("type", "matricule", "nom", "numero", "message")
+        self.arbre_alertes = ttk.Treeview(cadre_alertes, columns=colonnes_alertes, show="headings")
+        for col, largeur in zip(colonnes_alertes, (170, 90, 150, 110, 420)):
             self.arbre_alertes.heading(col, text=col.upper())
             self.arbre_alertes.column(col, width=largeur)
-        self.arbre_alertes.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self.arbre_alertes.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        defilement_alertes = ttk.Scrollbar(cadre_alertes, orient="vertical", command=self.arbre_alertes.yview)
+        defilement_alertes.grid(row=0, column=1, sticky="ns", pady=8)
+        self.arbre_alertes.configure(yscrollcommand=defilement_alertes.set)
+        theme.configurer_tags_couleur(self.arbre_alertes, theme.COULEURS_ALERTE)
 
         self.label_resultat_export = ttk.Label(cadre, text="")
-        self.label_resultat_export.grid(row=2, column=0, sticky="w", padx=10, pady=(0, 10))
+        self.label_resultat_export.grid(row=3, column=0, sticky="w", padx=10, pady=(0, 10))
 
         self._rafraichir_mois_disponibles()
 
@@ -330,9 +382,22 @@ class AppWindow(tk.Tk):
         alertes = generer_alertes(mois, syntheses, self.history, self.reference, self.config_repo)
         self._dernieres_syntheses, self._dernieres_alertes = syntheses, alertes
 
+        self.arbre_synthese.delete(*self.arbre_synthese.get_children())
+        for s in sorted(syntheses, key=lambda s: s.total_actuel, reverse=True):
+            self.arbre_synthese.insert("", "end", tags=(s.statut,), values=(
+                s.matricule, s.nom,
+                f"{s.montant_orange:,.0f}".replace(",", " "), f"{s.montant_mtn:,.0f}".replace(",", " "),
+                f"{s.total_actuel:,.0f}".replace(",", " "),
+                f"{s.total_precedent:,.0f}".replace(",", " ") if s.total_precedent is not None else "—",
+                f"{s.variation_montant:,.0f}".replace(",", " ") if s.variation_montant is not None else "—",
+                f"{s.variation_pct:.1f}" if s.variation_pct is not None else "—",
+                s.statut,
+            ))
+
         self.arbre_alertes.delete(*self.arbre_alertes.get_children())
         for a in alertes:
-            self.arbre_alertes.insert("", "end", values=(a.type.value, a.matricule or "", a.nom, a.numero, a.message))
+            self.arbre_alertes.insert("", "end", tags=(a.type.value,),
+                                       values=(a.type.value, a.matricule or "", a.nom, a.numero, a.message))
 
         try:
             chemin = exporter_rapport(mois, syntheses, alertes, self.history)
@@ -341,6 +406,7 @@ class AppWindow(tk.Tk):
             return
 
         self.label_resultat_export.configure(text=f"Rapport généré : {chemin}")
+        self.dashboard.rafraichir(mois)
         if messagebox.askyesno("Rapport généré", f"Rapport généré :\n{chemin}\n\nOuvrir le dossier ?"):
             _ouvrir_dossier(chemin.parent)
 

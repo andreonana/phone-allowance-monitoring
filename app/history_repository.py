@@ -185,6 +185,21 @@ class HistoryRepository:
                 entry["numero_mtn"] = c["numero_normalise"] or entry["numero_mtn"]
         return resultat
 
+    def totaux_globaux_par_mois(self) -> dict[str, dict]:
+        """
+        Retourne {mois: {"ORANGE": montant, "MTN": montant, "total": montant}}
+        agrégé sur TOUTES les lignes du mois (y compris non identifiées et
+        invalides, qui restent des montants réellement facturés) — sert à
+        tracer l'évolution globale de la consommation dans le temps
+        (tableau de bord), indépendamment du rattachement à un matricule.
+        """
+        resultat: dict[str, dict] = {}
+        for c in self.consommations:
+            entry = resultat.setdefault(c["mois"], {"ORANGE": 0.0, "MTN": 0.0, "total": 0.0})
+            entry[c["operateur"]] += c["montant"]
+            entry["total"] += c["montant"]
+        return resultat
+
     def numeros_du_mois(self, mois: str, operateur: Operateur) -> set[str]:
         return {c["numero_normalise"] for c in self.lignes_du_mois(mois, operateur)
                 if c["numero_normalise"]}
