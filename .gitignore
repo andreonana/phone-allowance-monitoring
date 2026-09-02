@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.idea/
+.claude/
+.pytest_cache/
+data/*.xlsx
+data/exports/
+data/logs/
