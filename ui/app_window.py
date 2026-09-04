@@ -34,6 +34,21 @@ from ui import theme
 from ui.dashboard import DashboardFrame
 
 
+# Clé de tri par colonne pour le tableau de synthèse (cf. AppWindow._trier_synthese) :
+# valeurs manquantes (mois précédent inexistant...) reléguées en fin de tri croissant.
+_CLES_TRI_SYNTHESE = {
+    "matricule": lambda s: s.matricule,
+    "nom": lambda s: s.nom,
+    "orange": lambda s: s.montant_orange,
+    "mtn": lambda s: s.montant_mtn,
+    "total_actuel": lambda s: s.total_actuel,
+    "total_precedent": lambda s: s.total_precedent if s.total_precedent is not None else float("-inf"),
+    "variation": lambda s: s.variation_montant if s.variation_montant is not None else float("-inf"),
+    "variation_pct": lambda s: s.variation_pct if s.variation_pct is not None else float("-inf"),
+    "statut": lambda s: s.statut,
+}
+
+
 def _ouvrir_dossier(chemin: Path) -> None:
     """Ouvre un dossier dans l'explorateur de fichiers du système."""
     systeme = platform.system()
@@ -362,9 +377,12 @@ class AppWindow(tk.Tk):
         entetes_synthese = ("Matricule", "Nom", "Orange", "MTN", "Total mois actuel",
                              "Total mois précédent", "Variation (FCFA)", "Variation (%)", "Statut")
         self.arbre_synthese = ttk.Treeview(cadre_synthese, columns=colonnes_synthese, show="headings")
+        self._entetes_synthese = dict(zip(colonnes_synthese, entetes_synthese))
+        self._tri_synthese_colonne = "total_actuel"
+        self._tri_synthese_ascendant = False
         for col, entete_col, largeur in zip(colonnes_synthese, entetes_synthese,
                                              (90, 150, 100, 100, 130, 140, 130, 100, 90)):
-            self.arbre_synthese.heading(col, text=entete_col)
+            self.arbre_synthese.heading(col, text=entete_col, command=lambda c=col: self._trier_synthese(c))
             self.arbre_synthese.column(col, width=largeur, anchor="e" if col not in ("matricule", "nom", "statut") else "w")
         self.arbre_synthese.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
         defilement = ttk.Scrollbar(cadre_synthese, orient="vertical", command=self.arbre_synthese.yview)
@@ -431,18 +449,7 @@ class AppWindow(tk.Tk):
         alertes = generer_alertes(mois, syntheses, self.history, self.reference, self.config_repo)
         self._dernieres_syntheses, self._dernieres_alertes = syntheses, alertes
 
-        self.arbre_synthese.delete(*self.arbre_synthese.get_children())
-        for s in sorted(syntheses, key=lambda s: s.total_actuel, reverse=True):
-            self.arbre_synthese.insert("", "end", tags=(s.statut,), values=(
-                s.matricule, s.nom,
-                f"{s.montant_orange:,.0f}".replace(",", " "), f"{s.montant_mtn:,.0f}".replace(",", " "),
-                f"{s.total_actuel:,.0f}".replace(",", " "),
-                f"{s.total_precedent:,.0f}".replace(",", " ") if s.total_precedent is not None else "—",
-                f"{s.variation_montant:,.0f}".replace(",", " ") if s.variation_montant is not None else "—",
-                f"{s.variation_pct:.1f}" if s.variation_pct is not None else "—",
-                s.statut,
-            ))
-
+        self._afficher_syntheses()
         self._filtrer_alertes()
 
         try:
@@ -455,6 +462,41 @@ class AppWindow(tk.Tk):
         self.dashboard.rafraichir(mois)
         if messagebox.askyesno("Rapport généré", f"Rapport généré :\n{chemin}\n\nOuvrir le dossier ?"):
             _ouvrir_dossier(chemin.parent)
+
+    def _trier_synthese(self, colonne: str) -> None:
+        """Appelée au clic sur un en-tête de colonne : trie par cette
+        colonne (ordre croissant), ou inverse l'ordre si on reclique sur la
+        colonne déjà triée."""
+        if self._tri_synthese_colonne == colonne:
+            self._tri_synthese_ascendant = not self._tri_synthese_ascendant
+        else:
+            self._tri_synthese_colonne = colonne
+            self._tri_synthese_ascendant = True
+        self._afficher_syntheses()
+
+    def _afficher_syntheses(self) -> None:
+        """Réaffiche `self._dernieres_syntheses` triée selon la colonne/l'ordre
+        courants (cf. `_trier_synthese`), avec un indicateur ▲/▼ sur l'en-tête active."""
+        for col, libelle in self._entetes_synthese.items():
+            indicateur = ""
+            if col == self._tri_synthese_colonne:
+                indicateur = " ▲" if self._tri_synthese_ascendant else " ▼"
+            self.arbre_synthese.heading(col, text=libelle + indicateur)
+
+        cle = _CLES_TRI_SYNTHESE[self._tri_synthese_colonne]
+        syntheses_triees = sorted(self._dernieres_syntheses, key=cle, reverse=not self._tri_synthese_ascendant)
+
+        self.arbre_synthese.delete(*self.arbre_synthese.get_children())
+        for s in syntheses_triees:
+            self.arbre_synthese.insert("", "end", tags=(s.statut,), values=(
+                s.matricule, s.nom,
+                f"{s.montant_orange:,.0f}".replace(",", " "), f"{s.montant_mtn:,.0f}".replace(",", " "),
+                f"{s.total_actuel:,.0f}".replace(",", " "),
+                f"{s.total_precedent:,.0f}".replace(",", " ") if s.total_precedent is not None else "—",
+                f"{s.variation_montant:,.0f}".replace(",", " ") if s.variation_montant is not None else "—",
+                f"{s.variation_pct:.1f}" if s.variation_pct is not None else "—",
+                s.statut,
+            ))
 
     def _filtrer_alertes(self) -> None:
         """Réaffiche `self._dernieres_alertes` en appliquant le filtre par
