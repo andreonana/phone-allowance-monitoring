@@ -25,7 +25,7 @@ from app.config import ConfigRepository
 from app.consolidation import consolider
 from app.excel_io import FichierOperateurInvalide, lire_fichier_operateur
 from app.history_repository import HistoryRepository
-from app.models import Operateur, TypeCollaborateur
+from app.models import Operateur, TypeAlerte, TypeCollaborateur
 from app.paths import get_data_dir, get_history_path, get_reference_base_path
 from app.reconciliation_engine import rapprocher_fichier
 from app.reference_repository import ReferenceRepository
@@ -185,18 +185,31 @@ class AppWindow(tk.Tk):
     def _construire_onglet_reference(self) -> None:
         cadre = self.onglet_reference
         cadre.columnconfigure(0, weight=1)
-        cadre.rowconfigure(0, weight=1)
+        cadre.rowconfigure(1, weight=1)
+
+        # -- Recherche (nom, numéro, matricule, direction, fonction) --
+        barre_recherche = ttk.Frame(cadre)
+        barre_recherche.grid(row=0, column=0, columnspan=4, sticky="ew", padx=10, pady=(10, 0))
+        ttk.Label(barre_recherche, text="Recherche (nom, numéro, matricule, direction, fonction) :").pack(
+            side="left")
+        self.var_recherche_collaborateur = tk.StringVar()
+        ttk.Entry(barre_recherche, textvariable=self.var_recherche_collaborateur, width=32).pack(
+            side="left", padx=(4, 16))
+        self.var_recherche_collaborateur.trace_add(
+            "write", lambda *_args: self._rafraichir_arbre_collaborateurs())
+        ttk.Button(barre_recherche, text="Réinitialiser",
+                   command=lambda: self.var_recherche_collaborateur.set("")).pack(side="left")
 
         colonnes = ("matricule", "nom", "direction", "fonction", "type", "actif")
         self.arbre_collaborateurs = ttk.Treeview(cadre, columns=colonnes, show="headings", height=15)
         for col, largeur in zip(colonnes, (90, 160, 120, 140, 90, 60)):
             self.arbre_collaborateurs.heading(col, text=col.upper())
             self.arbre_collaborateurs.column(col, width=largeur)
-        self.arbre_collaborateurs.grid(row=0, column=0, columnspan=4, sticky="nsew", padx=10, pady=10)
+        self.arbre_collaborateurs.grid(row=1, column=0, columnspan=4, sticky="nsew", padx=10, pady=10)
         self.arbre_collaborateurs.bind("<<TreeviewSelect>>", self._selection_collaborateur)
 
         formulaire = ttk.LabelFrame(cadre, text="Collaborateur")
-        formulaire.grid(row=1, column=0, columnspan=4, sticky="ew", padx=10, pady=5)
+        formulaire.grid(row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=5)
         for col in range(4):
             formulaire.columnconfigure(col, weight=1)
 
@@ -219,13 +232,13 @@ class AppWindow(tk.Tk):
                      values=[t.value for t in TypeCollaborateur]).grid(row=1, column=4, sticky="ew", padx=5)
 
         boutons = ttk.Frame(cadre)
-        boutons.grid(row=2, column=0, columnspan=4, sticky="w", padx=10, pady=(0, 10))
+        boutons.grid(row=3, column=0, columnspan=4, sticky="w", padx=10, pady=(0, 10))
         ttk.Button(boutons, text="Enregistrer", command=self._enregistrer_collaborateur).pack(side="left", padx=5)
         ttk.Button(boutons, text="Supprimer", command=self._supprimer_collaborateur).pack(side="left", padx=5)
         ttk.Button(boutons, text="Nouveau", command=self._vider_formulaire_collaborateur).pack(side="left", padx=5)
 
         numeros = ttk.LabelFrame(cadre, text="Ajouter un numéro au collaborateur sélectionné")
-        numeros.grid(row=3, column=0, columnspan=4, sticky="ew", padx=10, pady=(0, 10))
+        numeros.grid(row=4, column=0, columnspan=4, sticky="ew", padx=10, pady=(0, 10))
 
         self.var_numero_brut = tk.StringVar()
         self.var_operateur_numero = tk.StringVar(value=Operateur.ORANGE.value)
@@ -241,7 +254,22 @@ class AppWindow(tk.Tk):
 
     def _rafraichir_arbre_collaborateurs(self) -> None:
         self.arbre_collaborateurs.delete(*self.arbre_collaborateurs.get_children())
+        recherche = self.var_recherche_collaborateur.get().strip().lower()
+
+        matricules_par_numero: set[str] = set()
+        if recherche:
+            matricules_par_numero = {
+                ref.matricule for numero, ref in self.reference.numeros.items()
+                if recherche in numero.lower()
+            }
+
         for c in sorted(self.reference.collaborateurs.values(), key=lambda c: c.matricule):
+            if recherche:
+                champs_texte = (c.matricule, c.nom, c.direction, c.fonction)
+                correspond = (any(recherche in str(champ).lower() for champ in champs_texte)
+                              or c.matricule in matricules_par_numero)
+                if not correspond:
+                    continue
             self.arbre_collaborateurs.insert("", "end", iid=c.matricule, values=(
                 c.matricule, c.nom, c.direction, c.fonction, c.type.value, "Oui" if c.actif else "Non",
             ))
@@ -348,16 +376,37 @@ class AppWindow(tk.Tk):
         cadre_alertes = ttk.LabelFrame(cadre, text="Alertes")
         cadre_alertes.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 8))
         cadre_alertes.columnconfigure(0, weight=1)
-        cadre_alertes.rowconfigure(0, weight=1)
+        cadre_alertes.rowconfigure(1, weight=1)
+
+        # -- Filtre par type + recherche libre (nom, numéro, matricule) --
+        barre_filtre = ttk.Frame(cadre_alertes)
+        barre_filtre.grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(8, 0))
+
+        ttk.Label(barre_filtre, text="Type :").pack(side="left")
+        self.var_filtre_type_alerte = tk.StringVar(value="Tous")
+        combo_filtre_type = ttk.Combobox(
+            barre_filtre, textvariable=self.var_filtre_type_alerte, state="readonly", width=24,
+            values=["Tous"] + [t.value for t in TypeAlerte],
+        )
+        combo_filtre_type.pack(side="left", padx=(4, 16))
+        combo_filtre_type.bind("<<ComboboxSelected>>", lambda _e: self._filtrer_alertes())
+
+        ttk.Label(barre_filtre, text="Recherche (nom, numéro, matricule) :").pack(side="left")
+        self.var_recherche_alerte = tk.StringVar()
+        ttk.Entry(barre_filtre, textvariable=self.var_recherche_alerte, width=28).pack(
+            side="left", padx=(4, 16))
+        self.var_recherche_alerte.trace_add("write", lambda *_args: self._filtrer_alertes())
+
+        ttk.Button(barre_filtre, text="Réinitialiser", command=self._reinitialiser_filtres_alertes).pack(side="left")
 
         colonnes_alertes = ("type", "matricule", "nom", "numero", "message")
         self.arbre_alertes = ttk.Treeview(cadre_alertes, columns=colonnes_alertes, show="headings")
         for col, largeur in zip(colonnes_alertes, (170, 90, 150, 110, 420)):
             self.arbre_alertes.heading(col, text=col.upper())
             self.arbre_alertes.column(col, width=largeur)
-        self.arbre_alertes.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        self.arbre_alertes.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
         defilement_alertes = ttk.Scrollbar(cadre_alertes, orient="vertical", command=self.arbre_alertes.yview)
-        defilement_alertes.grid(row=0, column=1, sticky="ns", pady=8)
+        defilement_alertes.grid(row=1, column=1, sticky="ns", pady=8)
         self.arbre_alertes.configure(yscrollcommand=defilement_alertes.set)
         theme.configurer_tags_couleur(self.arbre_alertes, theme.COULEURS_ALERTE)
 
@@ -394,10 +443,7 @@ class AppWindow(tk.Tk):
                 s.statut,
             ))
 
-        self.arbre_alertes.delete(*self.arbre_alertes.get_children())
-        for a in alertes:
-            self.arbre_alertes.insert("", "end", tags=(a.type.value,),
-                                       values=(a.type.value, a.matricule or "", a.nom, a.numero, a.message))
+        self._filtrer_alertes()
 
         try:
             chemin = exporter_rapport(mois, syntheses, alertes, self.history)
@@ -409,6 +455,28 @@ class AppWindow(tk.Tk):
         self.dashboard.rafraichir(mois)
         if messagebox.askyesno("Rapport généré", f"Rapport généré :\n{chemin}\n\nOuvrir le dossier ?"):
             _ouvrir_dossier(chemin.parent)
+
+    def _filtrer_alertes(self) -> None:
+        """Réaffiche `self._dernieres_alertes` en appliquant le filtre par
+        type et la recherche libre (nom, numéro, matricule) en cours."""
+        type_filtre = self.var_filtre_type_alerte.get()
+        recherche = self.var_recherche_alerte.get().strip().lower()
+
+        self.arbre_alertes.delete(*self.arbre_alertes.get_children())
+        for a in self._dernieres_alertes:
+            if type_filtre != "Tous" and a.type.value != type_filtre:
+                continue
+            if recherche:
+                champs = (a.matricule or "", a.nom or "", a.numero or "")
+                if not any(recherche in str(champ).lower() for champ in champs):
+                    continue
+            self.arbre_alertes.insert("", "end", tags=(a.type.value,),
+                                       values=(a.type.value, a.matricule or "", a.nom, a.numero, a.message))
+
+    def _reinitialiser_filtres_alertes(self) -> None:
+        self.var_filtre_type_alerte.set("Tous")
+        self.var_recherche_alerte.set("")
+        self._filtrer_alertes()
 
     # ------------------------------------------------------------------ #
     # Onglet Paramètres
